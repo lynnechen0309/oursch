@@ -1,0 +1,923 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Schedule Assistant</title>
+    
+    <!-- iOS Home Screen Icon Settings -->
+    <link rel="apple-touch-icon" href="1768891280636.jpg">
+    <link rel="icon" type="image/jpeg" href="1768891280636.jpg">
+    <meta name="apple-mobile-web-app-title" content="Schedule">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="default">
+
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <!-- Babel for JSX -->
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+
+    <!-- Custom Scrollbar Styles -->
+    <style>
+        .custom-scrollbar::-webkit-scrollbar {
+            width: 4px;
+        }
+        .custom-scrollbar::-webkit-scrollbar-track {
+            background: transparent;
+        }
+        .custom-scrollbar::-webkit-scrollbar-thumb {
+            background-color: #e5e7eb;
+            border-radius: 20px;
+        }
+        body {
+            background-color: #FDFBF7;
+            /* Prevent bounce effect on iOS */
+            overscroll-behavior-y: none;
+        }
+    </style>
+</head>
+<body>
+    <div id="root"></div>
+
+    <!-- Import Maps for Modules -->
+    <script type="importmap">
+    {
+        "imports": {
+            "react": "https://esm.sh/react@18.2.0",
+            "react-dom/client": "https://esm.sh/react-dom@18.2.0/client",
+            "lucide-react": "https://esm.sh/lucide-react@0.344.0?external=react",
+            "firebase/app": "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js",
+            "firebase/auth": "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js",
+            "firebase/firestore": "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js"
+        }
+    }
+    </script>
+
+    <!-- Application Code -->
+    <script type="text/babel" data-type="module">
+        import React, { useState, useEffect, useRef } from 'react';
+        import { createRoot } from 'react-dom/client';
+        import { ChevronLeft, ChevronRight, Plus, X, Calendar as CalendarIcon, User, Trash2, Clock, Heart, Tag, Check, CalendarRange, ChevronDown, Users } from 'lucide-react';
+        import { initializeApp } from "firebase/app";
+        import { getAuth, signInAnonymously, onAuthStateChanged, signInWithCustomToken } from "firebase/auth";
+        import { getFirestore, collection, addDoc, updateDoc, deleteDoc, doc, onSnapshot, query } from "firebase/firestore";
+
+        // --- Firebase Configuration ---
+        const firebaseConfig = {
+            apiKey: "AIzaSyAm1uVnuDFYgwhbV6glzMTholH8bprx1UQ",
+            authDomain: "ftvphone.firebaseapp.com",
+            projectId: "ftvphone",
+            storageBucket: "ftvphone.firebasestorage.app",
+            messagingSenderId: "786164045340",
+            appId: "1:786164045340:web:f570728c9929a845a5b1d9"
+        };
+
+        // Initialize Firebase
+        const app = initializeApp(firebaseConfig);
+        const auth = getAuth(app);
+        const db = getFirestore(app);
+
+        // Standalone App ID
+        const appId = 'schedule-assistant-standalone';
+
+        // --- Constants & Config ---
+
+        const DAYS_OF_WEEK = ['日', '一', '二', '三', '四', '五', '六'];
+
+        const PEOPLE = {
+            YANLING: { 
+                id: 'yanling', 
+                name: '妍伶', 
+                colorClass: 'bg-rose-200 text-rose-900 border-rose-300', 
+                dotColor: 'bg-rose-500' 
+            },
+            WEILUN: { 
+                id: 'weilun', 
+                name: '葳倫', 
+                colorClass: 'bg-cyan-100 text-cyan-900 border-cyan-200', 
+                dotColor: 'bg-cyan-500' 
+            },
+            JOINT: {
+                id: 'joint',
+                name: '共同',
+                colorClass: 'bg-orange-100 text-orange-900 border-orange-200', // Light Orange for Joint
+                dotColor: 'bg-orange-500'
+            }
+        };
+
+        const DEFAULT_PRESETS = ['休假', '小夜', '播報'];
+
+        // Expanded to 8 colors
+        const CUSTOM_COLORS = [
+            { bg: 'bg-red-200', text: 'text-red-900', border: 'border-red-300' }, // Red
+            { bg: 'bg-orange-200', text: 'text-orange-900', border: 'border-orange-300' }, // Orange (Darker than joint)
+            { bg: 'bg-amber-200', text: 'text-amber-900', border: 'border-amber-300' }, // Yellow/Amber
+            { bg: 'bg-lime-200', text: 'text-lime-900', border: 'border-lime-300' }, // Lime
+            { bg: 'bg-emerald-200', text: 'text-emerald-900', border: 'border-emerald-300' }, // Green
+            { bg: 'bg-sky-200', text: 'text-sky-900', border: 'border-sky-300' }, // Sky Blue
+            { bg: 'bg-violet-200', text: 'text-violet-900', border: 'border-violet-300' }, // Violet
+            { bg: 'bg-gray-800', text: 'text-white', border: 'border-gray-600' }, // Dark Mode
+        ];
+
+        // --- Helper Functions ---
+
+        const getDaysInMonth = (year, month) => new Date(year, month + 1, 0).getDate();
+        const getFirstDayOfMonth = (year, month) => new Date(year, month, 1).getDay();
+
+        const generateCalendarDays = (year, month) => {
+            const daysInMonth = getDaysInMonth(year, month);
+            const firstDay = getFirstDayOfMonth(year, month);
+            const days = [];
+
+            for (let i = 0; i < firstDay; i++) {
+                days.push({ day: null, key: `pad-${i}` });
+            }
+
+            for (let i = 1; i <= daysInMonth; i++) {
+                days.push({ day: i, key: `day-${i}`, dateString: `${year}-${String(month + 1).padStart(2, '0')}-${String(i).padStart(2, '0')}` });
+            }
+
+            return days;
+        };
+
+        // --- Components ---
+
+        const EventFormContent = ({ 
+            person, setPerson, 
+            title, setTitle, 
+            time, setTime,
+            customColor, setCustomColor, 
+            presets, 
+            isAddingPreset, setIsAddingPreset, 
+            newPresetText, setNewPresetText, handleAddPreset 
+        }) => {
+            return (
+                <div className="space-y-6">
+                <div className="space-y-3">
+                    <label className="text-sm font-medium text-gray-500 block">選擇人員</label>
+                    {/* Changed to grid-cols-3 to accommodate Joint option */}
+                    <div className="grid grid-cols-3 gap-3">
+                    {Object.values(PEOPLE).map((p) => (
+                        <button
+                        key={p.id}
+                        type="button"
+                        onClick={() => setPerson(p.id)}
+                        className={`
+                            relative overflow-hidden p-3 rounded-xl border-2 transition-all duration-200 flex flex-col items-center justify-center gap-1
+                            ${person === p.id 
+                            ? `${p.colorClass} border-transparent shadow-md scale-[1.02]` 
+                            : 'bg-gray-50 border-transparent text-gray-400 hover:bg-gray-100'}
+                        `}
+                        >
+                        {p.id === 'joint' ? <Users size={18} /> : <User size={18} />}
+                        <span className="font-bold text-sm">{p.name}</span>
+                        {person === p.id && (
+                            <div className="absolute top-0 right-0 w-4 h-4 bg-current opacity-20 rounded-bl-xl" />
+                        )}
+                        </button>
+                    ))}
+                    </div>
+                </div>
+
+                <div className="space-y-3">
+                    <label className="text-sm font-medium text-gray-500 block">行程內容 & 時間</label>
+                    
+                    <div className="flex flex-wrap gap-2 mb-3 items-center">
+                    {presets.map((preset) => (
+                        <button
+                        key={preset}
+                        type="button"
+                        onClick={() => setTitle(preset)}
+                        className={`
+                            px-4 py-1.5 rounded-full text-sm font-medium transition-all
+                            ${title === preset 
+                            ? 'bg-gray-800 text-white shadow-md' 
+                            : 'bg-gray-100 text-gray-600 hover:bg-gray-200'}
+                        `}
+                        >
+                        {preset}
+                        </button>
+                    ))}
+                    
+                    {isAddingPreset ? (
+                        <div className="flex items-center gap-1 bg-white border border-indigo-200 rounded-full pl-3 pr-1 py-1 shadow-sm animate-in slide-in-from-left-2 duration-200">
+                        <input 
+                            type="text" 
+                            autoFocus
+                            value={newPresetText}
+                            onChange={(e) => setNewPresetText(e.target.value)}
+                            onKeyDown={(e) => e.key === 'Enter' && (e.preventDefault(), handleAddPreset())}
+                            placeholder="新類別..."
+                            className="w-20 text-sm outline-none bg-transparent"
+                        />
+                        <button 
+                            type="button" 
+                            onClick={handleAddPreset}
+                            className="p-1 bg-indigo-100 text-indigo-600 rounded-full hover:bg-indigo-200"
+                        >
+                            <Check size={14} />
+                        </button>
+                        <button 
+                            type="button" 
+                            onClick={() => setIsAddingPreset(false)}
+                            className="p-1 text-gray-400 hover:text-gray-600"
+                        >
+                            <X size={14} />
+                        </button>
+                        </div>
+                    ) : (
+                        <button
+                        type="button"
+                        onClick={() => setIsAddingPreset(true)}
+                        className="px-3 py-1.5 rounded-full text-sm font-medium bg-white border border-dashed border-gray-300 text-gray-400 hover:text-indigo-600 hover:border-indigo-300 hover:bg-indigo-50 transition-all flex items-center gap-1"
+                        >
+                        <Plus size={14} /> 
+                        </button>
+                    )}
+                    </div>
+
+                    <div className="flex gap-3">
+                    <input
+                        type="text"
+                        value={title}
+                        onChange={(e) => setTitle(e.target.value)}
+                        placeholder="行程名稱..."
+                        className="flex-1 px-4 py-3 bg-gray-50 border-0 rounded-xl focus:ring-2 focus:ring-indigo-200 focus:bg-white transition-all outline-none text-gray-700"
+                        required
+                    />
+                    <div className="relative">
+                        <input
+                        type="time"
+                        value={time}
+                        onChange={(e) => setTime(e.target.value)}
+                        className="px-3 py-3 bg-gray-50 border-0 rounded-xl focus:ring-2 focus:ring-indigo-200 focus:bg-white transition-all outline-none text-gray-700 w-32 cursor-pointer"
+                        />
+                        <Clock size={16} className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none" />
+                    </div>
+                    </div>
+                </div>
+
+                <div className="space-y-3">
+                    <div className="flex justify-between items-center">
+                    <label className="text-sm font-medium text-gray-500">自訂顏色 (8色可選)</label>
+                    {customColor && (
+                        <button type="button" onClick={() => setCustomColor(null)} className="text-xs text-gray-400 hover:text-red-500 underline">重置為人員預設</button>
+                    )}
+                    </div>
+                    <div className="flex flex-wrap gap-3">
+                    {CUSTOM_COLORS.map((c, idx) => (
+                        <button
+                        key={idx}
+                        type="button"
+                        onClick={() => setCustomColor(c)}
+                        className={`
+                            w-8 h-8 rounded-full border-2 transition-all transform
+                            ${c.bg} ${customColor === c ? 'border-gray-800 scale-110 shadow-sm' : 'border-transparent hover:scale-110'}
+                        `}
+                        />
+                    ))}
+                    </div>
+                </div>
+                </div>
+            );
+        };
+
+        const EventModal = ({ isOpen, onClose, date, onSave, editingEvent, onDelete, presets, onAddPreset }) => {
+            const [person, setPerson] = useState(PEOPLE.YANLING.id);
+            const [title, setTitle] = useState('');
+            const [time, setTime] = useState('');
+            const [customColor, setCustomColor] = useState(null);
+            const [isAddingPreset, setIsAddingPreset] = useState(false);
+            const [newPresetText, setNewPresetText] = useState('');
+
+            useEffect(() => {
+                if (isOpen) {
+                if (editingEvent) {
+                    setPerson(editingEvent.person);
+                    setTitle(editingEvent.title);
+                    setTime(editingEvent.time || '');
+                    setCustomColor(editingEvent.customColor || null);
+                } else {
+                    setPerson(PEOPLE.YANLING.id);
+                    setTitle('休假');
+                    setTime('');
+                    setCustomColor(null);
+                }
+                setIsAddingPreset(false);
+                setNewPresetText('');
+                }
+            }, [isOpen, editingEvent]);
+
+            if (!isOpen) return null;
+
+            const handleSubmit = (e) => {
+                e.preventDefault();
+                onSave({
+                id: editingEvent ? editingEvent.id : null,
+                date,
+                person,
+                title,
+                time,
+                customColor,
+                });
+                onClose();
+            };
+
+            const handleAddPreset = () => {
+                if (newPresetText.trim()) {
+                onAddPreset(newPresetText.trim());
+                setTitle(newPresetText.trim());
+                setNewPresetText('');
+                setIsAddingPreset(false);
+                }
+            };
+
+            return (
+                <div className="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center z-50 p-4 animate-in fade-in duration-200">
+                <div className="bg-white rounded-3xl shadow-2xl w-full max-w-md overflow-hidden transform transition-all scale-100">
+                    <div className="bg-gradient-to-r from-indigo-50 to-pink-50 p-6 flex justify-between items-center border-b border-gray-100">
+                    <div>
+                        <h3 className="text-xl font-bold text-gray-800 flex items-center gap-2">
+                        {editingEvent ? '編輯行程' : '新增行程'}
+                        <span className="text-sm font-normal text-gray-500 bg-white/50 px-2 py-0.5 rounded-full">
+                            {date}
+                        </span>
+                        </h3>
+                    </div>
+                    <button onClick={onClose} className="text-gray-400 hover:text-gray-600 transition-colors p-1 rounded-full hover:bg-white/50">
+                        <X size={24} />
+                    </button>
+                    </div>
+
+                    <form onSubmit={handleSubmit} className="p-6">
+                    <EventFormContent 
+                        person={person} setPerson={setPerson}
+                        title={title} setTitle={setTitle}
+                        time={time} setTime={setTime}
+                        customColor={customColor} setCustomColor={setCustomColor}
+                        presets={presets}
+                        isAddingPreset={isAddingPreset} setIsAddingPreset={setIsAddingPreset}
+                        newPresetText={newPresetText} setNewPresetText={setNewPresetText}
+                        handleAddPreset={handleAddPreset}
+                    />
+
+                    <div className="pt-8 flex gap-3">
+                        {editingEvent && (
+                        <button
+                            type="button"
+                            onClick={() => { onDelete(editingEvent.id); onClose(); }}
+                            className="px-4 py-3 rounded-xl bg-red-50 text-red-600 font-medium hover:bg-red-100 transition-colors flex items-center justify-center"
+                        >
+                            <Trash2 size={20} />
+                        </button>
+                        )}
+                        <button
+                        type="submit"
+                        className="flex-1 bg-gray-900 text-white py-3 rounded-xl font-bold text-lg hover:bg-black transition-colors shadow-lg active:scale-95 transform duration-100"
+                        >
+                        {editingEvent ? '更新行程' : '加入行程'}
+                        </button>
+                    </div>
+                    </form>
+                </div>
+                </div>
+            );
+        };
+
+        const BatchAddModal = ({ isOpen, onClose, year, month, onSaveBatch, presets, onAddPreset }) => {
+            const [person, setPerson] = useState(PEOPLE.YANLING.id);
+            const [title, setTitle] = useState('休假');
+            const [time, setTime] = useState('');
+            const [customColor, setCustomColor] = useState(null);
+            const [selectedDates, setSelectedDates] = useState([]);
+            
+            const [isAddingPreset, setIsAddingPreset] = useState(false);
+            const [newPresetText, setNewPresetText] = useState('');
+
+            const days = generateCalendarDays(year, month);
+
+            useEffect(() => {
+                if (isOpen) {
+                setSelectedDates([]);
+                }
+            }, [isOpen]);
+
+            if (!isOpen) return null;
+
+            const toggleDate = (dateString) => {
+                if (selectedDates.includes(dateString)) {
+                setSelectedDates(selectedDates.filter(d => d !== dateString));
+                } else {
+                setSelectedDates([...selectedDates, dateString]);
+                }
+            };
+
+            const handleSave = () => {
+                if (selectedDates.length === 0) return;
+                onSaveBatch({
+                dates: selectedDates,
+                person,
+                title,
+                time,
+                customColor
+                });
+                onClose();
+            };
+
+            const handleAddPreset = () => {
+                if (newPresetText.trim()) {
+                onAddPreset(newPresetText.trim());
+                setTitle(newPresetText.trim());
+                setNewPresetText('');
+                setIsAddingPreset(false);
+                }
+            };
+
+            return (
+                <div className="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center z-50 p-4 animate-in fade-in duration-200">
+                <div className="bg-white rounded-3xl shadow-2xl w-full max-w-lg overflow-hidden transform transition-all scale-100 flex flex-col max-h-[90vh]">
+                    
+                    <div className="bg-gradient-to-r from-indigo-50 to-pink-50 p-6 flex justify-between items-center border-b border-gray-100 shrink-0">
+                    <div>
+                        <h3 className="text-xl font-bold text-gray-800 flex items-center gap-2">
+                        快速排班
+                        <span className="text-sm font-normal text-indigo-600 bg-indigo-50 px-2 py-0.5 rounded-full border border-indigo-100">
+                            已選 {selectedDates.length} 天
+                        </span>
+                        </h3>
+                        <p className="text-xs text-gray-500 mt-1">設定一個行程，套用到多個日期</p>
+                    </div>
+                    <button onClick={onClose} className="text-gray-400 hover:text-gray-600 transition-colors p-1 rounded-full hover:bg-white/50">
+                        <X size={24} />
+                    </button>
+                    </div>
+
+                    <div className="overflow-y-auto p-6">
+                    <EventFormContent 
+                        person={person} setPerson={setPerson}
+                        title={title} setTitle={setTitle}
+                        time={time} setTime={setTime}
+                        customColor={customColor} setCustomColor={setCustomColor}
+                        presets={presets}
+                        isAddingPreset={isAddingPreset} setIsAddingPreset={setIsAddingPreset}
+                        newPresetText={newPresetText} setNewPresetText={setNewPresetText}
+                        handleAddPreset={handleAddPreset}
+                    />
+
+                    <div className="mt-8 space-y-3">
+                        <label className="text-sm font-medium text-gray-500 block">點擊日期以選取 (當月)</label>
+                        <div className="grid grid-cols-7 gap-1 bg-gray-50 p-3 rounded-xl border border-gray-100">
+                            {DAYS_OF_WEEK.map(d => (
+                            <div key={d} className="text-center text-xs text-gray-400 font-medium mb-1">{d}</div>
+                            ))}
+                            {days.map((item) => {
+                            if (!item.day) return <div key={item.key} />;
+                            const isSelected = selectedDates.includes(item.dateString);
+                            return (
+                                <button
+                                key={item.key}
+                                type="button"
+                                onClick={() => toggleDate(item.dateString)}
+                                className={`
+                                    aspect-square rounded-lg flex items-center justify-center text-sm font-semibold transition-all duration-200
+                                    ${isSelected 
+                                    ? 'bg-indigo-600 text-white shadow-md scale-95' 
+                                    : 'bg-white text-gray-600 hover:bg-indigo-100 border border-transparent'}
+                                `}
+                                >
+                                {item.day}
+                                </button>
+                            );
+                            })}
+                        </div>
+                    </div>
+                    </div>
+
+                    <div className="p-6 pt-0 shrink-0">
+                    <button
+                        onClick={handleSave}
+                        disabled={selectedDates.length === 0}
+                        className={`
+                        w-full py-3 rounded-xl font-bold text-lg transition-colors shadow-lg transform duration-100
+                        ${selectedDates.length === 0 
+                            ? 'bg-gray-200 text-gray-400 cursor-not-allowed' 
+                            : 'bg-indigo-600 text-white hover:bg-indigo-700 active:scale-95'}
+                        `}
+                    >
+                        {selectedDates.length === 0 ? '請選擇日期' : `加入 ${selectedDates.length} 個行程`}
+                    </button>
+                    </div>
+
+                </div>
+                </div>
+            );
+        };
+
+        function App() {
+            const [currentDate, setCurrentDate] = useState(new Date());
+            const [events, setEvents] = useState([]);
+            const [presets, setPresets] = useState(DEFAULT_PRESETS);
+            const [user, setUser] = useState(null);
+            
+            const [isModalOpen, setIsModalOpen] = useState(false);
+            const [isBatchModalOpen, setIsBatchModalOpen] = useState(false);
+            
+            const [selectedDate, setSelectedDate] = useState(null);
+            const [editingEvent, setEditingEvent] = useState(null);
+
+            const [isMonthPickerOpen, setIsMonthPickerOpen] = useState(false);
+            const [pickerYear, setPickerYear] = useState(currentDate.getFullYear());
+
+            useEffect(() => {
+                const initAuth = async () => {
+                    try {
+                        await signInAnonymously(auth);
+                    } catch (err) {
+                        console.error("Anonymous auth failed:", err);
+                    }
+                };
+
+                initAuth();
+                const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
+                    setUser(currentUser);
+                });
+                return () => unsubscribe();
+            }, []);
+
+            useEffect(() => {
+                if (!user) return;
+
+                const q = query(collection(db, 'artifacts', appId, 'public', 'data', 'events'));
+                const unsubscribe = onSnapshot(q, (snapshot) => {
+                    const loadedEvents = snapshot.docs.map(doc => ({
+                        id: doc.id,
+                        ...doc.data()
+                    }));
+                    setEvents(loadedEvents);
+                }, (error) => {
+                    console.error("Error loading events:", error);
+                });
+
+                return () => unsubscribe();
+            }, [user]);
+
+            useEffect(() => {
+                if (!user) return;
+
+                const q = query(collection(db, 'artifacts', appId, 'public', 'data', 'presets'));
+                const unsubscribe = onSnapshot(q, (snapshot) => {
+                    const customPresets = snapshot.docs.map(doc => doc.data().name);
+                    const uniquePresets = Array.from(new Set([...DEFAULT_PRESETS, ...customPresets]));
+                    setPresets(uniquePresets);
+                }, (error) => {
+                    console.error("Error loading presets:", error);
+                });
+
+                return () => unsubscribe();
+            }, [user]);
+
+            useEffect(() => {
+                if (isMonthPickerOpen) {
+                    setPickerYear(currentDate.getFullYear());
+                }
+            }, [isMonthPickerOpen, currentDate]);
+
+
+            const year = currentDate.getFullYear();
+            const month = currentDate.getMonth();
+            
+            const days = generateCalendarDays(year, month);
+
+            const prevMonth = () => setCurrentDate(new Date(year, month - 1, 1));
+            const nextMonth = () => setCurrentDate(new Date(year, month + 1, 1));
+            const today = () => setCurrentDate(new Date());
+
+            const handleDateClick = (dateString) => {
+                setSelectedDate(dateString);
+                setEditingEvent(null);
+                setIsModalOpen(true);
+            };
+
+            const handleEventClick = (e, event) => {
+                e.stopPropagation();
+                setSelectedDate(event.date);
+                setEditingEvent(event);
+                setIsModalOpen(true);
+            };
+
+            const saveEvent = async (eventData) => {
+                if (!user) return;
+                try {
+                if (eventData.id) {
+                    const eventRef = doc(db, 'artifacts', appId, 'public', 'data', 'events', eventData.id);
+                    const { id, ...dataToSave } = eventData;
+                    await updateDoc(eventRef, dataToSave);
+                } else {
+                    const { id, ...dataToSave } = eventData;
+                    await addDoc(collection(db, 'artifacts', appId, 'public', 'data', 'events'), dataToSave);
+                }
+                } catch (err) {
+                console.error("Error saving event:", err);
+                }
+            };
+
+            const saveBatchEvents = async (batchData) => {
+                if (!user) return;
+                try {
+                const promises = batchData.dates.map(date => {
+                    return addDoc(collection(db, 'artifacts', appId, 'public', 'data', 'events'), {
+                    date,
+                    person: batchData.person,
+                    title: batchData.title,
+                    time: batchData.time,
+                    customColor: batchData.customColor
+                    });
+                });
+                await Promise.all(promises);
+                } catch (err) {
+                console.error("Error batch saving:", err);
+                }
+            };
+
+            const deleteEvent = async (id) => {
+                if (!user) return;
+                try {
+                await deleteDoc(doc(db, 'artifacts', appId, 'public', 'data', 'events', id));
+                } catch (err) {
+                console.error("Error deleting event:", err);
+                }
+            };
+
+            const addPreset = async (newPreset) => {
+                if (!user) return;
+                if (presets.includes(newPreset)) return;
+                try {
+                await addDoc(collection(db, 'artifacts', appId, 'public', 'data', 'presets'), {
+                    name: newPreset
+                });
+                } catch (err) {
+                console.error("Error adding preset:", err);
+                }
+            };
+
+            const getEventStyle = (event) => {
+                if (event.customColor) {
+                return `${event.customColor.bg} ${event.customColor.text} border ${event.customColor.border}`;
+                }
+                const person = Object.values(PEOPLE).find(p => p.id === event.person);
+                return person ? `${person.colorClass} border border-transparent` : 'bg-gray-100 text-gray-800';
+            };
+
+            const getPersonName = (id) => {
+                return Object.values(PEOPLE).find(p => p.id === id)?.name || '';
+            };
+
+            return (
+                <div className="min-h-screen bg-[#FDFBF7] font-sans text-gray-800 selection:bg-rose-200">
+                
+                <div className="fixed top-0 left-0 w-64 h-64 bg-rose-100 rounded-full blur-3xl opacity-30 -translate-x-1/2 -translate-y-1/2 pointer-events-none"></div>
+                <div className="fixed bottom-0 right-0 w-96 h-96 bg-cyan-100 rounded-full blur-3xl opacity-30 translate-x-1/3 translate-y-1/3 pointer-events-none"></div>
+
+                {isMonthPickerOpen && (
+                    <div className="fixed inset-0 z-40 bg-transparent" onClick={() => setIsMonthPickerOpen(false)} />
+                )}
+
+                <div className="max-w-6xl mx-auto p-4 md:p-8 relative z-10">
+                    
+                    <header className="flex flex-col lg:flex-row justify-between items-center mb-8 gap-6">
+                    <div className="text-center lg:text-left">
+                        <h1 className="text-3xl font-extrabold tracking-tight flex items-center gap-2 justify-center lg:justify-start">
+                        <span className="bg-gradient-to-r from-rose-400 to-cyan-400 bg-clip-text text-transparent">Schedule</span> 
+                        <CalendarIcon className="w-6 h-6 text-cyan-400" />
+                        </h1>
+                        <p className="text-gray-400 text-sm font-medium mt-1">行程管理小幫手</p>
+                    </div>
+
+                    <div className="flex flex-col sm:flex-row items-center gap-4">
+                        <div className="flex items-center gap-2 bg-white p-2 rounded-2xl shadow-sm border border-gray-100 relative">
+                        <button onClick={prevMonth} className="p-2 hover:bg-gray-100 rounded-xl transition-colors text-gray-600">
+                            <ChevronLeft size={20} />
+                        </button>
+                        
+                        <div className="relative">
+                            <div 
+                                className="w-44 text-center cursor-pointer hover:bg-gray-50 rounded-xl transition-all py-1 px-2 border border-transparent hover:border-gray-100 flex items-center justify-center gap-2" 
+                                onClick={() => setIsMonthPickerOpen(!isMonthPickerOpen)}
+                            >
+                                <span className="text-xl font-bold tabular-nums text-gray-800">
+                                {year} 年 {month + 1} 月
+                                </span>
+                                <ChevronDown size={14} className={`text-gray-400 transition-transform duration-200 ${isMonthPickerOpen ? 'rotate-180' : ''}`} />
+                            </div>
+                            
+                            {isMonthPickerOpen && (
+                                <div className="absolute top-full mt-2 left-1/2 -translate-x-1/2 w-64 bg-white rounded-2xl shadow-xl border border-gray-100 z-50 p-4 animate-in fade-in zoom-in-95 duration-200">
+                                    <div className="flex justify-between items-center mb-4">
+                                        <button onClick={() => setPickerYear(pickerYear - 1)} className="p-1 hover:bg-gray-100 rounded-lg">
+                                            <ChevronLeft size={20} className="text-gray-500" />
+                                        </button>
+                                        <span className="font-bold text-lg text-gray-800 tabular-nums">{pickerYear}</span>
+                                        <button onClick={() => setPickerYear(pickerYear + 1)} className="p-1 hover:bg-gray-100 rounded-lg">
+                                            <ChevronRight size={20} className="text-gray-500" />
+                                        </button>
+                                    </div>
+                                    
+                                    <div className="grid grid-cols-3 gap-2">
+                                        {Array.from({ length: 12 }, (_, i) => (
+                                            <button
+                                                key={i}
+                                                onClick={() => {
+                                                    setCurrentDate(new Date(pickerYear, i, 1));
+                                                    setIsMonthPickerOpen(false);
+                                                }}
+                                                className={`
+                                                    py-2 rounded-lg text-sm font-medium transition-colors
+                                                    ${pickerYear === year && i === month 
+                                                        ? 'bg-indigo-600 text-white shadow-md' 
+                                                        : 'text-gray-600 hover:bg-gray-100'}
+                                                `}
+                                            >
+                                                {i + 1} 月
+                                            </button>
+                                        ))}
+                                    </div>
+                                    
+                                    <button 
+                                        onClick={() => {
+                                            setCurrentDate(new Date());
+                                            setIsMonthPickerOpen(false);
+                                        }}
+                                        className="w-full mt-3 py-2 text-sm text-indigo-600 font-medium hover:bg-indigo-50 rounded-lg transition-colors border-t border-gray-50 mt-4"
+                                    >
+                                        回到今天
+                                    </button>
+                                </div>
+                            )}
+                        </div>
+
+                        <button onClick={nextMonth} className="p-2 hover:bg-gray-100 rounded-xl transition-colors text-gray-600">
+                            <ChevronRight size={20} />
+                        </button>
+                        </div>
+
+                        <button 
+                        onClick={() => setIsBatchModalOpen(true)}
+                        className="px-4 py-3 bg-white hover:bg-indigo-50 text-indigo-600 font-bold rounded-2xl shadow-sm border border-indigo-100 flex items-center gap-2 transition-all active:scale-95"
+                        >
+                        <CalendarRange size={18} />
+                        快速排班
+                        </button>
+                    </div>
+
+                    <div className="flex gap-2 text-sm font-medium">
+                        <div className="flex items-center gap-2 px-3 py-1.5 bg-rose-50 text-rose-800 rounded-lg border border-rose-100">
+                            <div className="w-2 h-2 rounded-full bg-rose-400"></div>
+                            妍伶
+                        </div>
+                        <div className="flex items-center gap-2 px-3 py-1.5 bg-cyan-50 text-cyan-700 rounded-lg border border-cyan-100">
+                            <div className="w-2 h-2 rounded-full bg-cyan-400"></div>
+                            葳倫
+                        </div>
+                        {/* New Joint Legend */}
+                        <div className="flex items-center gap-2 px-3 py-1.5 bg-orange-50 text-orange-800 rounded-lg border border-orange-100">
+                            <div className="w-2 h-2 rounded-full bg-orange-400"></div>
+                            共同
+                        </div>
+                    </div>
+                    </header>
+
+                    <div className="bg-white rounded-[2rem] shadow-xl border border-gray-100 overflow-hidden">
+                    
+                    <div className="grid grid-cols-7 border-b border-gray-100 bg-gray-50/50">
+                        {DAYS_OF_WEEK.map((day, idx) => (
+                        <div key={day} className={`py-4 text-center text-sm font-semibold ${idx === 0 || idx === 6 ? 'text-rose-400' : 'text-gray-400'}`}>
+                            {day}
+                        </div>
+                        ))}
+                    </div>
+
+                    <div className="grid grid-cols-7 auto-rows-[minmax(100px,1fr)] md:auto-rows-[minmax(140px,1fr)]">
+                        {days.map((item, index) => {
+                        if (!item.day) {
+                            return <div key={item.key} className="bg-gray-50/30 border-b border-r border-gray-50" />;
+                        }
+
+                        const isToday = new Date().toDateString() === new Date(year, month, item.day).toDateString();
+                        const dayEvents = events
+                            .filter(e => e.date === item.dateString)
+                            .sort((a, b) => {
+                                // 1. Priority: Leave events ('休假') go to top
+                                const isLeaveA = a.title === '休假';
+                                const isLeaveB = b.title === '休假';
+                                if (isLeaveA && !isLeaveB) return -1;
+                                if (!isLeaveA && isLeaveB) return 1;
+
+                                // 2. Secondary: Sort by time
+                                // Events with time usually come first in a day's schedule compared to all-day events if they are specific, 
+                                // but here we prioritize sorting by time value.
+                                if (a.time && !b.time) return -1;
+                                if (!a.time && b.time) return 1;
+                                if (a.time && b.time) return a.time.localeCompare(b.time);
+                                
+                                return 0;
+                            });
+
+                        return (
+                            <div 
+                            key={item.key} 
+                            onClick={() => handleDateClick(item.dateString)}
+                            className={`
+                                group relative p-2 border-b border-r border-gray-100 transition-all duration-200 hover:bg-gray-50 cursor-pointer flex flex-col gap-1
+                                ${isToday ? 'bg-indigo-50/30' : 'bg-white'}
+                            `}
+                            >
+                            <div className="flex justify-between items-start mb-1">
+                                <span 
+                                className={`
+                                    w-7 h-7 flex items-center justify-center rounded-full text-sm font-medium
+                                    ${isToday ? 'bg-indigo-600 text-white shadow-md shadow-indigo-200' : 'text-gray-600 group-hover:bg-gray-200'}
+                                `}
+                                >
+                                {item.day}
+                                </span>
+                                
+                                <button className="opacity-0 group-hover:opacity-100 text-gray-300 hover:text-indigo-600 transition-opacity">
+                                <Plus size={16} />
+                                </button>
+                            </div>
+
+                            <div className="flex-1 overflow-y-auto space-y-1.5 custom-scrollbar">
+                                {dayEvents.map(event => {
+                                    const isLeave = event.title === '休假';
+                                    return (
+                                        <div
+                                            key={event.id}
+                                            onClick={(e) => handleEventClick(e, event)}
+                                            className={`
+                                            text-xs md:text-sm px-2 py-1.5 rounded-lg truncate font-medium shadow-sm transition-transform hover:scale-[1.02] active:scale-95 cursor-pointer border-l-[3px] flex flex-col justify-center
+                                            ${getEventStyle(event)}
+                                            `}
+                                        >
+                                            {isLeave ? (
+                                                <div className="font-bold text-xs flex items-center gap-1">
+                                                    <span>{getPersonName(event.person)}</span>
+                                                    <span>{event.title}</span>
+                                                </div>
+                                            ) : (
+                                                <>
+                                                    <div className="flex justify-between items-center w-full">
+                                                        <span className="opacity-75 font-bold text-[10px] uppercase tracking-wide">
+                                                            {getPersonName(event.person)}
+                                                        </span>
+                                                        {event.time && (
+                                                        <span className="text-[10px] opacity-80 font-mono tracking-tight">{event.time}</span>
+                                                        )}
+                                                    </div>
+                                                    <span className="truncate">{event.title}</span>
+                                                </>
+                                            )}
+                                        </div>
+                                    );
+                                })}
+                            </div>
+                            </div>
+                        );
+                        })}
+                    </div>
+                    </div>
+
+                    <div className="mt-8 text-center text-gray-400 text-sm">
+                    <p>© {new Date().getFullYear()} Schedule Assistant • Made with <Heart className="inline w-3 h-3 text-rose-400" fill="currentColor" /> for Yanling & Weilun</p>
+                    </div>
+                </div>
+
+                <EventModal 
+                    isOpen={isModalOpen} 
+                    onClose={() => setIsModalOpen(false)} 
+                    date={selectedDate}
+                    onSave={saveEvent}
+                    onDelete={deleteEvent}
+                    editingEvent={editingEvent}
+                    presets={presets}
+                    onAddPreset={addPreset}
+                />
+
+                <BatchAddModal 
+                    isOpen={isBatchModalOpen}
+                    onClose={() => setIsBatchModalOpen(false)}
+                    year={year}
+                    month={month}
+                    onSaveBatch={saveBatchEvents}
+                    presets={presets}
+                    onAddPreset={addPreset}
+                />
+                </div>
+            );
+        }
+
+        const root = createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
+</body>
+</html>
